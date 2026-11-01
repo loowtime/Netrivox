@@ -1,11 +1,13 @@
 package app
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
 
 	"github.com/loowtime/netrivox/internal/config"
+	"github.com/loowtime/netrivox/internal/discovery"
 	"github.com/loowtime/netrivox/internal/telemetry"
 	"github.com/spf13/cobra"
 )
@@ -21,12 +23,40 @@ func NewCommand() *cobra.Command {
 	root.AddCommand(
 		newVersionCommand(),
 		newConfigCommand(),
-		newPlaceholderCommand("discovery", "Run controlled discovery against authorized targets."),
+		newDiscoveryCommand(),
 		newPlaceholderCommand("inventory", "Inspect stored host and service inventory."),
 		newPlaceholderCommand("export", "Export inventory data."),
 		newPlaceholderCommand("history", "Review scan history."),
 	)
 	return root
+}
+
+func newDiscoveryCommand() *cobra.Command {
+	var probePort int
+	command := &cobra.Command{
+		Use:   "discovery",
+		Short: "Run controlled discovery against authorized targets",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			path, err := config.Path()
+			if err != nil {
+				return err
+			}
+			cfg, err := config.Load(path)
+			if err != nil {
+				return err
+			}
+			hosts, err := (discovery.Scanner{
+				Timeout: cfg.Timeout, Workers: cfg.MaxConcurrency,
+				MaxHosts: cfg.MaxHosts, ProbePort: probePort,
+			}).Discover(cmd.Context(), cfg.AuthorizedTargets)
+			if err != nil {
+				return fmt.Errorf("discover hosts: %w", err)
+			}
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(hosts)
+		},
+	}
+	command.Flags().IntVar(&probePort, "probe-port", 443, "TCP port used for the reachability probe")
+	return command
 }
 
 func newVersionCommand() *cobra.Command {
