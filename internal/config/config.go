@@ -14,6 +14,7 @@ const (
 	AppName            = "netrivox"
 	DefaultTimeout     = 5 * time.Second
 	DefaultConcurrency = 16
+	DefaultMaxHosts    = 256
 )
 
 var ErrNoAuthorizedTargets = errors.New("no authorized targets configured")
@@ -24,6 +25,7 @@ type Config struct {
 	AuthorizedTargets []string      `json:"authorized_targets"`
 	Timeout           time.Duration `json:"timeout"`
 	MaxConcurrency    int           `json:"max_concurrency"`
+	MaxHosts          int           `json:"max_hosts"`
 	LogLevel          string        `json:"log_level"`
 }
 
@@ -32,6 +34,7 @@ func Default() Config {
 		AuthorizedTargets: []string{},
 		Timeout:           DefaultTimeout,
 		MaxConcurrency:    DefaultConcurrency,
+		MaxHosts:          DefaultMaxHosts,
 		LogLevel:          "info",
 	}
 }
@@ -45,6 +48,9 @@ func (c Config) Validate() error {
 	}
 	if c.MaxConcurrency < 1 {
 		return errors.New("max_concurrency must be at least 1")
+	}
+	if c.MaxHosts < 1 {
+		return errors.New("max_hosts must be at least 1")
 	}
 	for _, target := range c.AuthorizedTargets {
 		if _, _, err := net.ParseCIDR(target); err != nil {
@@ -75,6 +81,9 @@ func Load(path string) (Config, error) {
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return Config{}, fmt.Errorf("parse config %q: %w", path, err)
+	}
+	if cfg.MaxHosts == 0 {
+		cfg.MaxHosts = DefaultMaxHosts
 	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, fmt.Errorf("validate config %q: %w", path, err)

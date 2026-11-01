@@ -24,7 +24,7 @@ func TestWriteAndLoad(t *testing.T) {
 		t.Fatalf("Load() error = %v, want missing targets error", err)
 	}
 
-	data := []byte(`{"authorized_targets":["192.0.2.0/24"],"timeout":2000000000,"max_concurrency":4,"log_level":"debug"}`)
+	data := []byte(`{"authorized_targets":["192.0.2.0/24"],"timeout":2000000000,"max_concurrency":4,"max_hosts":16,"log_level":"debug"}`)
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
