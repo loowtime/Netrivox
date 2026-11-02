@@ -5,14 +5,24 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/loowtime/netrivox/internal/config"
 	"github.com/loowtime/netrivox/internal/discovery"
+	"github.com/loowtime/netrivox/internal/export"
+	"github.com/loowtime/netrivox/internal/scanner"
 	"github.com/loowtime/netrivox/internal/telemetry"
+	"github.com/loowtime/netrivox/internal/tlsinfo"
+	"github.com/loowtime/netrivox/pkg/models"
 	"github.com/spf13/cobra"
 )
 
 const version = "0.1.0"
+
+const maxRequestedPorts = 4096
 
 func NewCommand() *cobra.Command {
 	root := &cobra.Command{
@@ -24,11 +34,189 @@ func NewCommand() *cobra.Command {
 		newVersionCommand(),
 		newConfigCommand(),
 		newDiscoveryCommand(),
+		newScanCommand(),
 		newPlaceholderCommand("inventory", "Inspect stored host and service inventory."),
 		newPlaceholderCommand("export", "Export inventory data."),
 		newPlaceholderCommand("history", "Review scan history."),
 	)
 	return root
+}
+
+func newScanCommand() *cobra.Command {
+	var probePort int
+	var ports string
+	var format string
+	var output string
+	var inspectTLS bool
+	command := &cobra.Command{
+		Use:   "scan",
+		Short: "Discover hosts and inventory selected TCP services",
+		Example: "  netrivox scan --ports 22,80,443 --format table\n" +
+			"  netrivox scan --ports 80,443 --tls --format json --output scan.json",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+			portList, err := parsePorts(ports)
+			if err != nil {
+				return err
+			}
+			start := time.Now()
+			hosts, err := (discovery.Scanner{
+				Timeout: cfg.Timeout, Workers: cfg.MaxConcurrency,
+				MaxHosts: cfg.MaxHosts, ProbePort: probePort,
+			}).Discover(cmd.Context(), cfg.AuthorizedTargets)
+			if err != nil {
+				return fmt.Errorf("discover hosts: %w", err)
+			}
+			reachableHosts := make([]string, 0)
+			for _, host := range hosts {
+				if host.Reachable {
+					reachableHosts = append(reachableHosts, host.IP)
+				}
+			}
+			services := scanner.PortScanner{
+				Timeout: cfg.Timeout, Workers: cfg.MaxConcurrency,
+			}.ScanHosts(cmd.Context(), reachableHosts, portList)
+			result := models.ScanResult{
+				Scan: models.Scan{
+					ID:        fmt.Sprintf("scan-%d", start.Unix()),
+					StartedAt: start, CompletedAt: time.Now(),
+					TargetCount: len(cfg.AuthorizedTargets), HostCount: len(hosts),
+					SchemaVersion: models.SchemaVersion,
+				},
+				Hosts: hosts, Services: services,
+			}
+			if inspectTLS {
+				result.TLS = inspectOpenTLS(cmd, cfg.Timeout, services)
+			}
+			if err := writeScanResult(cmd, result, format, output); err != nil {
+				return err
+			}
+			if output == "" && strings.EqualFold(format, "table") {
+				fmt.Fprintf(cmd.ErrOrStderr(), "\nCompleted in %s: %d hosts, %d reachable, %d services checked, %d open\n",
+					time.Since(start).Round(time.Millisecond), len(hosts), len(reachableHosts),
+					len(services), countOpenServices(services))
+			}
+			return nil
+		},
+	}
+	command.Flags().IntVar(&probePort, "probe-port", 443, "TCP port used to identify reachable hosts")
+	command.Flags().StringVar(&ports, "ports", "22,80,443,8080", "TCP ports/ranges to inventory, e.g. 22,80-443")
+	command.Flags().StringVar(&format, "format", "table", "Output format: table, json, or csv")
+	command.Flags().StringVarP(&output, "output", "o", "", "Write results to a file instead of stdout")
+	command.Flags().BoolVar(&inspectTLS, "tls", false, "Inspect TLS metadata on open TLS services")
+	return command
+}
+
+func loadConfig() (config.Config, error) {
+	path, err := config.Path()
+	if err != nil {
+		return config.Config{}, err
+	}
+	return config.Load(path)
+}
+
+func parsePorts(value string) ([]int, error) {
+	if strings.TrimSpace(value) == "" {
+		return nil, fmt.Errorf("ports must not be empty")
+	}
+	seen := make(map[int]struct{})
+	for _, part := range strings.Split(value, ",") {
+		parts := strings.Split(strings.TrimSpace(part), "-")
+		if len(parts) > 2 {
+			return nil, fmt.Errorf("invalid TCP port range %q", part)
+		}
+		first, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+		if err != nil || first < 1 || first > 65535 {
+			return nil, fmt.Errorf("invalid TCP port %q", part)
+		}
+		last := first
+		if len(parts) == 2 {
+			last, err = strconv.Atoi(strings.TrimSpace(parts[1]))
+			if err != nil || last < first || last > 65535 {
+				return nil, fmt.Errorf("invalid TCP port range %q", part)
+			}
+		}
+		for port := first; port <= last; port++ {
+			seen[port] = struct{}{}
+		}
+	}
+
+	result := make([]int, 0, len(seen))
+	if len(seen) > maxRequestedPorts {
+		return nil, fmt.Errorf("port selection contains %d ports; maximum is %d", len(seen), maxRequestedPorts)
+	}
+	for port := range seen {
+		result = append(result, port)
+	}
+	sort.Ints(result)
+	return result, nil
+}
+
+func countOpenServices(services []models.Service) int {
+	count := 0
+	for _, service := range services {
+		if service.State == "open" {
+			count++
+		}
+	}
+	return count
+}
+
+func inspectOpenTLS(cmd *cobra.Command, timeout time.Duration, services []models.Service) []models.TLSMetadata {
+	analyzer := tlsinfo.Analyzer{Timeout: timeout}
+	result := make([]models.TLSMetadata, 0)
+	for _, service := range services {
+		if service.State != "open" || (service.Port != 443 && service.Port != 8443) {
+			continue
+		}
+		metadata, err := analyzer.Inspect(cmd.Context(), service.HostIP, service.Port)
+		if err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v\n", err)
+			continue
+		}
+		result = append(result, metadata)
+	}
+	return result
+}
+
+func writeScanResult(cmd *cobra.Command, result models.ScanResult, format, output string) error {
+	var writer *os.File
+	if output == "" {
+		switch strings.ToLower(format) {
+		case "json":
+			return export.JSON(cmd.OutOrStdout(), result)
+		case "csv":
+			return export.CSV(cmd.OutOrStdout(), result)
+		case "table":
+			return export.Table(cmd.OutOrStdout(), result)
+		default:
+			return fmt.Errorf("unsupported format %q; choose table, json, or csv", format)
+		}
+	}
+	var err error
+	writer, err = os.Create(output)
+	if err != nil {
+		return fmt.Errorf("create output %q: %w", output, err)
+	}
+	defer writer.Close()
+	switch strings.ToLower(format) {
+	case "json":
+		err = export.JSON(writer, result)
+	case "csv":
+		err = export.CSV(writer, result)
+	case "table":
+		err = export.Table(writer, result)
+	default:
+		return fmt.Errorf("unsupported format %q; choose table, json, or csv", format)
+	}
+	if err != nil {
+		return fmt.Errorf("write output %q: %w", output, err)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Scan written to %s\n", output)
+	return nil
 }
 
 func newDiscoveryCommand() *cobra.Command {
