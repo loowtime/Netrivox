@@ -22,11 +22,32 @@ type Host struct {
 }
 
 type Service struct {
-	HostIP     string        `json:"host_ip"`
-	Port       int           `json:"port"`
-	Protocol   string        `json:"protocol"`
-	State      string        `json:"state"`
-	Name       string        `json:"name,omitempty"`
-	ObservedAt time.Time     `json:"observed_at"`
-	Duration   time.Duration `json:"duration,omitempty"`
+	HostIP      string        `json:"host_ip"`
+	Port        int           `json:"port"`
+	Protocol    string        `json:"protocol"`
+	State       string        `json:"state"`
+	Name        string        `json:"name,omitempty"`
+	Category    string        `json:"category,omitempty"`
+	Description string        `json:"description,omitempty"`
+	ObservedAt  time.Time     `json:"observed_at"`
+	Duration    time.Duration `json:"duration,omitempty"`
+}
+
+type TLSMetadata struct {
+	Host          string    `json:"host"`
+	Port          int       `json:"port"`
+	Version       string    `json:"version,omitempty"`
+	Subject       string    `json:"subject,omitempty"`
+	Issuer        string    `json:"issuer,omitempty"`
+	SANs          []string  `json:"sans,omitempty"`
+	NotAfter      time.Time `json:"not_after,omitempty"`
+	ExpiresIn     int       `json:"expires_in_days,omitempty"`
+	ExpiryWarning bool      `json:"expiry_warning"`
+}
+
+type ScanResult struct {
+	Scan     Scan          `json:"scan"`
+	Hosts    []Host        `json:"hosts"`
+	Services []Service     `json:"services"`
+	TLS      []TLSMetadata `json:"tls,omitempty"`
 }
