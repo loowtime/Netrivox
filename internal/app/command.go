@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 	"github.com/loowtime/netrivox/internal/discovery"
 	"github.com/loowtime/netrivox/internal/export"
 	"github.com/loowtime/netrivox/internal/scanner"
+	"github.com/loowtime/netrivox/internal/storage"
 	"github.com/loowtime/netrivox/internal/telemetry"
 	"github.com/loowtime/netrivox/internal/tlsinfo"
 	"github.com/loowtime/netrivox/pkg/models"
@@ -37,7 +39,7 @@ func NewCommand() *cobra.Command {
 		newScanCommand(),
 		newPlaceholderCommand("inventory", "Inspect stored host and service inventory."),
 		newPlaceholderCommand("export", "Export inventory data."),
-		newPlaceholderCommand("history", "Review scan history."),
+		newHistoryCommand(),
 	)
 	return root
 }
@@ -81,7 +83,7 @@ func newScanCommand() *cobra.Command {
 			}.ScanHosts(cmd.Context(), reachableHosts, portList)
 			result := models.ScanResult{
 				Scan: models.Scan{
-					ID:        fmt.Sprintf("scan-%d", start.Unix()),
+					ID:        fmt.Sprintf("scan-%d", start.UnixNano()),
 					StartedAt: start, CompletedAt: time.Now(),
 					TargetCount: len(cfg.AuthorizedTargets), HostCount: len(hosts),
 					SchemaVersion: models.SchemaVersion,
@@ -91,9 +93,13 @@ func newScanCommand() *cobra.Command {
 			if inspectTLS {
 				result.TLS = inspectOpenTLS(cmd, cfg.Timeout, services)
 			}
+			if err := saveScan(cmd.Context(), result); err != nil {
+				return err
+			}
 			if err := writeScanResult(cmd, result, format, output); err != nil {
 				return err
 			}
+
 			if output == "" && strings.EqualFold(format, "table") {
 				fmt.Fprintf(cmd.ErrOrStderr(), "\nCompleted in %s: %d hosts, %d reachable, %d services checked, %d open\n",
 					time.Since(start).Round(time.Millisecond), len(hosts), len(reachableHosts),
@@ -107,6 +113,52 @@ func newScanCommand() *cobra.Command {
 	command.Flags().StringVar(&format, "format", "table", "Output format: table, json, or csv")
 	command.Flags().StringVarP(&output, "output", "o", "", "Write results to a file instead of stdout")
 	command.Flags().BoolVar(&inspectTLS, "tls", false, "Inspect TLS metadata on open TLS services")
+	return command
+}
+
+func saveScan(ctx context.Context, result models.ScanResult) error {
+	configPath, err := config.Path()
+	if err != nil {
+		return err
+	}
+	store, err := storage.Open(storage.DatabasePath(configPath))
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	if err := store.Save(ctx, result); err != nil {
+		return fmt.Errorf("save scan history: %w", err)
+	}
+	return nil
+}
+
+func newHistoryCommand() *cobra.Command {
+	var limit int
+	command := &cobra.Command{
+		Use:   "history",
+		Short: "Review recent scan history",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			configPath, err := config.Path()
+			if err != nil {
+				return err
+			}
+			store, err := storage.Open(storage.DatabasePath(configPath))
+			if err != nil {
+				return err
+			}
+			defer store.Close()
+			scans, err := store.List(cmd.Context(), limit)
+			if err != nil {
+				return err
+			}
+			for _, scan := range scans {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s  %s  hosts=%d targets=%d\n",
+					scan.ID, scan.StartedAt.Format(time.RFC3339), scan.HostCount, scan.TargetCount)
+			}
+			return nil
+		},
+	}
+	command.Flags().IntVar(&limit, "limit", 20, "Maximum number of scans to show")
 	return command
 }
 
