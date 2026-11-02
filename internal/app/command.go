@@ -13,7 +13,9 @@ import (
 
 	"github.com/loowtime/netrivox/internal/config"
 	"github.com/loowtime/netrivox/internal/discovery"
+	"github.com/loowtime/netrivox/internal/dns"
 	"github.com/loowtime/netrivox/internal/export"
+	"github.com/loowtime/netrivox/internal/intelligence"
 	"github.com/loowtime/netrivox/internal/scanner"
 	"github.com/loowtime/netrivox/internal/storage"
 	"github.com/loowtime/netrivox/internal/telemetry"
@@ -37,6 +39,8 @@ func NewCommand() *cobra.Command {
 		newConfigCommand(),
 		newDiscoveryCommand(),
 		newScanCommand(),
+		newDNSCommand(),
+		newCompareCommand(),
 		newPlaceholderCommand("inventory", "Inspect stored host and service inventory."),
 		newPlaceholderCommand("export", "Export inventory data."),
 		newHistoryCommand(),
@@ -50,6 +54,7 @@ func newScanCommand() *cobra.Command {
 	var format string
 	var output string
 	var inspectTLS bool
+	var grabBanners bool
 	command := &cobra.Command{
 		Use:   "scan",
 		Short: "Discover hosts and inventory selected TCP services",
@@ -79,7 +84,7 @@ func newScanCommand() *cobra.Command {
 				}
 			}
 			services := scanner.PortScanner{
-				Timeout: cfg.Timeout, Workers: cfg.MaxConcurrency,
+				Timeout: cfg.Timeout, Workers: cfg.MaxConcurrency, GrabBanner: grabBanners,
 			}.ScanHosts(cmd.Context(), reachableHosts, portList)
 			result := models.ScanResult{
 				Scan: models.Scan{
@@ -113,7 +118,64 @@ func newScanCommand() *cobra.Command {
 	command.Flags().StringVar(&format, "format", "table", "Output format: table, json, or csv")
 	command.Flags().StringVarP(&output, "output", "o", "", "Write results to a file instead of stdout")
 	command.Flags().BoolVar(&inspectTLS, "tls", false, "Inspect TLS metadata on open TLS services")
+	command.Flags().BoolVar(&grabBanners, "banner", false, "Read a small, bounded service banner from open TCP services")
 	return command
+}
+
+func newDNSCommand() *cobra.Command {
+	var format string
+	command := &cobra.Command{
+		Use:   "dns <name>",
+		Short: "Query controlled DNS intelligence for a name",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			result, err := (dns.Client{Timeout: 5 * time.Second}).Lookup(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			if strings.EqualFold(format, "table") {
+				fmt.Fprintf(cmd.OutOrStdout(), "DNS: %s\nA: %s\nAAAA: %s\nMX: %s\nNS: %s\nTXT: %s\nPTR: %s\n",
+					result.Name, strings.Join(result.A, ", "), strings.Join(result.AAAA, ", "),
+					strings.Join(result.MX, ", "), strings.Join(result.NS, ", "),
+					strings.Join(result.TXT, ", "), strings.Join(result.PTR, ", "))
+				return nil
+			}
+			if !strings.EqualFold(format, "json") {
+				return fmt.Errorf("unsupported DNS format %q; choose table or json", format)
+			}
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
+		},
+	}
+	command.Flags().StringVar(&format, "format", "table", "Output format: table or json")
+	return command
+}
+
+func newCompareCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "compare <older-scan-id> <newer-scan-id>",
+		Short: "Compare two stored scans and show infrastructure changes",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			configPath, err := config.Path()
+			if err != nil {
+				return err
+			}
+			store, err := storage.Open(storage.DatabasePath(configPath))
+			if err != nil {
+				return err
+			}
+			defer store.Close()
+			older, err := store.Load(cmd.Context(), args[0])
+			if err != nil {
+				return fmt.Errorf("load older scan: %w", err)
+			}
+			newer, err := store.Load(cmd.Context(), args[1])
+			if err != nil {
+				return fmt.Errorf("load newer scan: %w", err)
+			}
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(intelligence.Compare(older, newer))
+		},
+	}
 }
 
 func saveScan(ctx context.Context, result models.ScanResult) error {
