@@ -37,3 +37,27 @@ func TestScanHonorsCancellation(t *testing.T) {
 		t.Fatalf("Scan() = %+v, want canceled result", results)
 	}
 }
+
+func TestScanHostsUsesOneBoundedResultSet(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	go func() {
+		for {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+	port := listener.Addr().(*net.TCPAddr).Port
+	services := (PortScanner{Timeout: time.Second, Workers: 2}).ScanHosts(
+		context.Background(), []string{"127.0.0.1"}, []int{port, 0},
+	)
+	if len(services) != 2 || services[0].Port > services[1].Port {
+		t.Fatalf("unexpected ordered results: %+v", services)
+	}
+}
