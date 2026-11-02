@@ -95,8 +95,10 @@ func (s Scanner) probe(ctx context.Context, ip string, port int, timeout time.Du
 		host.Reachable = true
 		_ = conn.Close()
 	}
-	if names, lookupErr := s.Resolver.LookupAddr(probeCtx, ip); lookupErr == nil && len(names) > 0 {
-		host.Hostname = names[0]
+	if host.Reachable {
+		if names, lookupErr := s.Resolver.LookupAddr(probeCtx, ip); lookupErr == nil && len(names) > 0 {
+			host.Hostname = names[0]
+		}
 	}
 	return host
 }
