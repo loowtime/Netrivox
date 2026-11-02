@@ -39,6 +39,16 @@ go run ./cmd/netrivox history
 go run ./cmd/netrivox history --limit 50
 ```
 
+Network intelligence commands:
+
+```sh
+go run ./cmd/netrivox scan --ports 22,80,443 --banner
+go run ./cmd/netrivox dns example.com --format json
+go run ./cmd/netrivox compare scan-older-id scan-newer-id
+```
+
+Banner collection is opt-in, bounded to 1024 bytes and a short read deadline. It is metadata collection only; Netrivox does not authenticate, exploit, brute-force, or bypass a service.
+
 Port selections accept individual ports and ranges, for example `22,80,443` or `1-1024`. A hard limit of 4096 selected ports prevents accidental resource exhaustion. Host and port work share a bounded worker pool from `max_concurrency`, so large authorized ranges do not create one goroutine pool per host. Results remain sorted by host and port for stable automation output.
 
 Core engine limits are configured centrally: `timeout` bounds individual operations, `max_concurrency` controls workers, and `max_hosts` prevents an accidentally broad CIDR from being expanded. Host discovery uses an explicit TCP probe port and does not perform stealth or packet-flooding scans.
