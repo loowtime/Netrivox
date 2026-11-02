@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"net"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
 
+	"github.com/loowtime/netrivox/internal/services"
 	"github.com/loowtime/netrivox/pkg/models"
 )
 
@@ -19,6 +21,67 @@ type PortScanner struct {
 	Dialer  Dialer
 	Timeout time.Duration
 	Workers int
+}
+
+type HostPortTarget struct {
+	Host string
+	Port int
+}
+
+func (s PortScanner) ScanHosts(ctx context.Context, hosts []string, ports []int) []models.Service {
+	if len(hosts) == 0 || len(ports) == 0 {
+		return []models.Service{}
+	}
+	if s.Dialer == nil {
+		s.Dialer = &net.Dialer{}
+	}
+	timeout := s.Timeout
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	workers := s.Workers
+	if workers < 1 {
+		workers = 1
+	}
+	targets := make(chan HostPortTarget)
+	results := make(chan models.Service, len(hosts)*len(ports))
+	var wait sync.WaitGroup
+	wait.Add(workers)
+	for range workers {
+		go func() {
+			defer wait.Done()
+			for target := range targets {
+				results <- s.scanPort(ctx, target.Host, target.Port, timeout)
+			}
+		}()
+	}
+	go func() {
+		defer close(targets)
+		for _, host := range hosts {
+			for _, port := range ports {
+				select {
+				case targets <- HostPortTarget{Host: host, Port: port}:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+	go func() {
+		wait.Wait()
+		close(results)
+	}()
+	services := make([]models.Service, 0, len(hosts)*len(ports))
+	for service := range results {
+		services = append(services, service)
+	}
+	sort.Slice(services, func(i, j int) bool {
+		if services[i].HostIP != services[j].HostIP {
+			return services[i].HostIP < services[j].HostIP
+		}
+		return services[i].Port < services[j].Port
+	})
+	return services
 }
 
 func (s PortScanner) Scan(ctx context.Context, host string, ports []int) []models.Service {
@@ -72,6 +135,10 @@ func (s PortScanner) scanPort(ctx context.Context, host string, port int, timeou
 	service := models.Service{
 		HostIP: host, Port: port, Protocol: "tcp", State: "closed", ObservedAt: start,
 	}
+	definition := services.Lookup(port)
+	service.Name = definition.Name
+	service.Category = definition.Category
+	service.Description = definition.Description
 	if port < 1 || port > 65535 {
 		service.Duration = time.Since(start)
 		return service
