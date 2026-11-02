@@ -21,6 +21,19 @@ The generated configuration contains no authorized targets. This is intentional:
 
 After adding authorized targets to the JSON configuration, run `go run ./cmd/netrivox discovery`. Results are emitted as JSON; `--probe-port` selects the explicit TCP port used for the bounded reachability probe.
 
+For the complete user-facing scan workflow:
+
+```sh
+go run ./cmd/netrivox scan --ports 22,80,443 --format table
+go run ./cmd/netrivox scan --ports 80,443 --tls --format json --output scan.json
+go run ./cmd/netrivox scan --ports 22,80,443 --format csv --output services.csv
+go run ./cmd/netrivox scan --ports 1-1024 --format table
+```
+
+The scan command first performs the bounded reachability check, then inventories ports only on reachable hosts. Known ports receive a service classification; TLS analysis is optional and reads certificate metadata without trusting or modifying the remote certificate.
+
+Port selections accept individual ports and ranges, for example `22,80,443` or `1-1024`. A hard limit of 4096 selected ports prevents accidental resource exhaustion. Host and port work share a bounded worker pool from `max_concurrency`, so large authorized ranges do not create one goroutine pool per host. Results remain sorted by host and port for stable automation output.
+
 Core engine limits are configured centrally: `timeout` bounds individual operations, `max_concurrency` controls workers, and `max_hosts` prevents an accidentally broad CIDR from being expanded. Host discovery uses an explicit TCP probe port and does not perform stealth or packet-flooding scans.
 
 ## Security model
