@@ -6,6 +6,7 @@ import (
 	"net"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,9 +19,11 @@ type Dialer interface {
 }
 
 type PortScanner struct {
-	Dialer  Dialer
-	Timeout time.Duration
-	Workers int
+	Dialer         Dialer
+	Timeout        time.Duration
+	Workers        int
+	GrabBanner     bool
+	MaxBannerBytes int
 }
 
 type HostPortTarget struct {
@@ -148,12 +151,34 @@ func (s PortScanner) scanPort(ctx context.Context, host string, port int, timeou
 	conn, err := s.Dialer.DialContext(probeCtx, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 	if err == nil {
 		service.State = "open"
+		if s.GrabBanner {
+			service.Banner = readBanner(conn, s.MaxBannerBytes)
+		}
 		_ = conn.Close()
 	} else if errors.Is(probeCtx.Err(), context.Canceled) {
 		service.State = "canceled"
 	} else if errors.Is(probeCtx.Err(), context.DeadlineExceeded) {
 		service.State = "timeout"
 	}
+
 	service.Duration = time.Since(start)
 	return service
+}
+
+func readBanner(conn net.Conn, maxBytes int) string {
+	if maxBytes <= 0 || maxBytes > 4096 {
+		maxBytes = 1024
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(250 * time.Millisecond))
+	buffer := make([]byte, maxBytes)
+	count, err := conn.Read(buffer)
+	if err != nil || count == 0 {
+		return ""
+	}
+	for index, char := range buffer[:count] {
+		if char < 32 && char != '\t' {
+			buffer[index] = ' '
+		}
+	}
+	return strings.TrimSpace(string(buffer[:count]))
 }
