@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/loowtime/netrivox/pkg/models"
@@ -68,6 +69,7 @@ CREATE TABLE IF NOT EXISTS services (
 	name TEXT NOT NULL DEFAULT '',
 	category TEXT NOT NULL DEFAULT '',
 	description TEXT NOT NULL DEFAULT '',
+	banner TEXT NOT NULL DEFAULT '',
 	observed_at TEXT NOT NULL,
 	duration_ns INTEGER NOT NULL DEFAULT 0,
 	PRIMARY KEY (scan_id, host_ip, port, protocol)
@@ -90,6 +92,9 @@ CREATE INDEX IF NOT EXISTS idx_services_scan_state ON services(scan_id, state);
 `
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("run SQLite migrations: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE services ADD COLUMN banner TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		return fmt.Errorf("upgrade services table: %w", err)
 	}
 	if _, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(1, ?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 		return fmt.Errorf("record SQLite migration: %w", err)
@@ -116,9 +121,9 @@ func (s *Store) Save(ctx context.Context, result models.ScanResult) error {
 		}
 	}
 	for _, service := range result.Services {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO services(scan_id, host_ip, port, protocol, state, name, category, description, observed_at, duration_ns) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		if _, err := tx.ExecContext(ctx, `INSERT INTO services(scan_id, host_ip, port, protocol, state, name, category, description, banner, observed_at, duration_ns) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			scan.ID, service.HostIP, service.Port, service.Protocol, service.State, service.Name, service.Category, service.Description,
-			service.ObservedAt.UTC().Format(time.RFC3339Nano), service.Duration.Nanoseconds()); err != nil {
+			service.Banner, service.ObservedAt.UTC().Format(time.RFC3339Nano), service.Duration.Nanoseconds()); err != nil {
 			return fmt.Errorf("save service %s:%d: %w", service.HostIP, service.Port, err)
 		}
 		for _, metadata := range result.TLS {
@@ -218,7 +223,7 @@ func (s *Store) Load(ctx context.Context, id string) (models.ScanResult, error) 
 	if err := rows.Close(); err != nil {
 		return result, fmt.Errorf("close host rows: %w", err)
 	}
-	rows, err = s.db.QueryContext(ctx, `SELECT host_ip, port, protocol, state, name, category, description, observed_at, duration_ns FROM services WHERE scan_id = ? ORDER BY host_ip, port`, id)
+	rows, err = s.db.QueryContext(ctx, `SELECT host_ip, port, protocol, state, name, category, description, banner, observed_at, duration_ns FROM services WHERE scan_id = ? ORDER BY host_ip, port`, id)
 	if err != nil {
 		return result, fmt.Errorf("load services: %w", err)
 	}
@@ -226,7 +231,7 @@ func (s *Store) Load(ctx context.Context, id string) (models.ScanResult, error) 
 		var service models.Service
 		var observed string
 		var duration int64
-		if err := rows.Scan(&service.HostIP, &service.Port, &service.Protocol, &service.State, &service.Name, &service.Category, &service.Description, &observed, &duration); err != nil {
+		if err := rows.Scan(&service.HostIP, &service.Port, &service.Protocol, &service.State, &service.Name, &service.Category, &service.Description, &service.Banner, &observed, &duration); err != nil {
 			rows.Close()
 			return result, fmt.Errorf("read service: %w", err)
 		}

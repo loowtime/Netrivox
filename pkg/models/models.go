@@ -29,6 +29,7 @@ type Service struct {
 	Name        string        `json:"name,omitempty"`
 	Category    string        `json:"category,omitempty"`
 	Description string        `json:"description,omitempty"`
+	Banner      string        `json:"banner,omitempty"`
 	ObservedAt  time.Time     `json:"observed_at"`
 	Duration    time.Duration `json:"duration,omitempty"`
 }
