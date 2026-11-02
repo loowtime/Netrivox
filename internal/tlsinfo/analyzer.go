@@ -12,8 +12,9 @@ import (
 )
 
 type Analyzer struct {
-	Timeout       time.Duration
-	ExpiryWarning time.Duration
+	Timeout        time.Duration
+	ExpiryWarning  time.Duration
+	AllowUntrusted bool
 }
 
 func (a Analyzer) Inspect(ctx context.Context, host string, port int) (models.TLSMetadata, error) {
@@ -31,14 +32,14 @@ func (a Analyzer) Inspect(ctx context.Context, host string, port int) (models.TL
 		return models.TLSMetadata{}, fmt.Errorf("connect TLS endpoint %s:%d: %w", host, port, err)
 	}
 	conn := tls.Client(raw, &tls.Config{
-		MinVersion: tls.VersionTLS12,
-		ServerName: host,
-		// In this intelligence-only operation certificates are inspected but not trusted.
-		InsecureSkipVerify: true, //nolint:gosec
+		MinVersion:         tls.VersionTLS12,
+		ServerName:         host,
+		InsecureSkipVerify: a.AllowUntrusted, // Explicitly opt-in for metadata-only inspection.
 	})
 	defer conn.Close()
-	if err := conn.HandshakeContext(ctx); err != nil {
-		return models.TLSMetadata{}, fmt.Errorf("complete TLS handshake for %s:%d: %w", host, port, err)
+	handshakeErr := conn.HandshakeContext(ctx)
+	if handshakeErr != nil && !a.AllowUntrusted {
+		return models.TLSMetadata{}, fmt.Errorf("complete verified TLS handshake for %s:%d: %w", host, port, handshakeErr)
 	}
 	state := conn.ConnectionState()
 	if len(state.PeerCertificates) == 0 {
@@ -46,7 +47,7 @@ func (a Analyzer) Inspect(ctx context.Context, host string, port int) (models.TL
 	}
 	cert := state.PeerCertificates[0]
 	expiresIn := int(time.Until(cert.NotAfter).Hours() / 24)
-	return models.TLSMetadata{
+	metadata := models.TLSMetadata{
 		Host:          host,
 		Port:          port,
 		Version:       tlsVersion(state.Version),
@@ -56,7 +57,14 @@ func (a Analyzer) Inspect(ctx context.Context, host string, port int) (models.TL
 		NotAfter:      cert.NotAfter,
 		ExpiresIn:     expiresIn,
 		ExpiryWarning: time.Until(cert.NotAfter) <= warning,
-	}, nil
+		Verified:      handshakeErr == nil && len(state.VerifiedChains) > 0,
+	}
+	if handshakeErr != nil {
+		metadata.VerificationError = handshakeErr.Error()
+	} else if a.AllowUntrusted {
+		metadata.VerificationError = "certificate verification was explicitly disabled"
+	}
+	return metadata, nil
 }
 
 func tlsVersion(version uint16) string {
