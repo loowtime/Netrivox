@@ -19,7 +19,7 @@ func TestSaveAndLoadScan(t *testing.T) {
 	input := models.ScanResult{
 		Scan:     models.Scan{ID: "scan-test", StartedAt: now, CompletedAt: now.Add(time.Second), TargetCount: 1, HostCount: 1, SchemaVersion: models.SchemaVersion},
 		Hosts:    []models.Host{{IP: "192.0.2.1", Reachable: true, Observed: now}},
-		Services: []models.Service{{HostIP: "192.0.2.1", Port: 443, Protocol: "tcp", State: "open", Name: "https", Banner: "HTTP/1.1 200 OK", ObservedAt: now}},
+		Services: []models.Service{{HostIP: "192.0.2.1", Port: 443, Protocol: "tcp", State: "open", Name: "https", Banner: "HTTP/1.1 200 OK", Version: "1.2.3", Vulnerabilities: []models.Vulnerability{{ID: "CVE-2099-0001"}}, ObservedAt: now}},
 		TLS:      []models.TLSMetadata{{Host: "192.0.2.1", Port: 443, Version: "TLS 1.3", SANs: []string{"example.test"}, NotAfter: now.Add(time.Hour)}},
 	}
 	if err := store.Save(context.Background(), input); err != nil {
@@ -29,7 +29,7 @@ func TestSaveAndLoadScan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Hosts) != 1 || len(got.Services) != 1 || len(got.TLS) != 1 || got.Services[0].Name != "https" || got.Services[0].Banner == "" {
+	if len(got.Hosts) != 1 || len(got.Services) != 1 || len(got.TLS) != 1 || got.Services[0].Name != "https" || got.Services[0].Banner == "" || len(got.Services[0].Vulnerabilities) != 1 {
 		t.Fatalf("unexpected loaded result: %+v", got)
 	}
 	history, err := store.List(context.Background(), 10)
