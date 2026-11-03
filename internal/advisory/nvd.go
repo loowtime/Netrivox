@@ -98,7 +98,8 @@ func (c Client) Lookup(ctx context.Context, service, version string) ([]models.V
 		}
 		result = append(result, models.Vulnerability{
 			ID: cve.ID, Severity: severity, CVSS: score, Summary: summary,
-			Source: "NVD", Match: "keyword match; verify affected version",
+			Source: "NVD", Match: "possible keyword match; affected product and version are not verified",
+			MatchType: "keyword", Verified: false, Confirmed: false,
 			Remediation: "Confirm the exact vendor advisory and upgrade or mitigate according to the vendor guidance.",
 		})
 	}

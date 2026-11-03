@@ -14,7 +14,8 @@ func TestLookupParsesNVDAdvisories(t *testing.T) {
 	}))
 	defer server.Close()
 	result, err := (Client{BaseURL: server.URL}).Lookup(context.Background(), "http", "1.2.3")
-	if err != nil || len(result) != 1 || result[0].ID != "CVE-2099-0001" || result[0].CVSS != 9.8 {
+	if err != nil || len(result) != 1 || result[0].ID != "CVE-2099-0001" || result[0].CVSS != 9.8 ||
+		result[0].MatchType != "keyword" || result[0].Verified || result[0].Confirmed {
 		t.Fatalf("Lookup() = %+v, %v", result, err)
 	}
 }

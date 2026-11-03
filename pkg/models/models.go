@@ -34,8 +34,24 @@ type Service struct {
 	VersionConfidence string          `json:"version_confidence,omitempty"`
 	VersionEvidence   string          `json:"version_evidence,omitempty"`
 	Vulnerabilities   []Vulnerability `json:"vulnerabilities,omitempty"`
+	RiskScore         int             `json:"risk_score,omitempty"`
+	RiskLevel         string          `json:"risk_level,omitempty"`
+	RiskFactors       []string        `json:"risk_factors,omitempty"`
+	HTTP              *HTTPMetadata   `json:"http,omitempty"`
 	ObservedAt        time.Time       `json:"observed_at"`
 	Duration          time.Duration   `json:"duration,omitempty"`
+}
+
+type HTTPMetadata struct {
+	URL                    string            `json:"url"`
+	StatusCode             int               `json:"status_code"`
+	Server                 string            `json:"server,omitempty"`
+	PoweredBy              string            `json:"powered_by,omitempty"`
+	Title                  string            `json:"title,omitempty"`
+	SecurityHeaders        map[string]string `json:"security_headers,omitempty"`
+	MissingSecurityHeaders []string          `json:"missing_security_headers,omitempty"`
+	RedirectBlocked        bool              `json:"redirect_blocked"`
+	VerifiedTLS            bool              `json:"verified_tls,omitempty"`
 }
 
 type Vulnerability struct {
@@ -45,19 +61,24 @@ type Vulnerability struct {
 	Summary     string  `json:"summary,omitempty"`
 	Source      string  `json:"source"`
 	Match       string  `json:"match"`
+	MatchType   string  `json:"match_type"`
+	Verified    bool    `json:"verified"`
+	Confirmed   bool    `json:"confirmed"`
 	Remediation string  `json:"remediation,omitempty"`
 }
 
 type TLSMetadata struct {
-	Host          string    `json:"host"`
-	Port          int       `json:"port"`
-	Version       string    `json:"version,omitempty"`
-	Subject       string    `json:"subject,omitempty"`
-	Issuer        string    `json:"issuer,omitempty"`
-	SANs          []string  `json:"sans,omitempty"`
-	NotAfter      time.Time `json:"not_after,omitempty"`
-	ExpiresIn     int       `json:"expires_in_days,omitempty"`
-	ExpiryWarning bool      `json:"expiry_warning"`
+	Host              string    `json:"host"`
+	Port              int       `json:"port"`
+	Version           string    `json:"version,omitempty"`
+	Subject           string    `json:"subject,omitempty"`
+	Issuer            string    `json:"issuer,omitempty"`
+	SANs              []string  `json:"sans,omitempty"`
+	NotAfter          time.Time `json:"not_after,omitempty"`
+	ExpiresIn         int       `json:"expires_in_days,omitempty"`
+	ExpiryWarning     bool      `json:"expiry_warning"`
+	Verified          bool      `json:"verified"`
+	VerificationError string    `json:"verification_error,omitempty"`
 }
 
 type ScanResult struct {
