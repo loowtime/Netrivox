@@ -22,28 +22,47 @@ type Host struct {
 }
 
 type Service struct {
-	HostIP      string        `json:"host_ip"`
-	Port        int           `json:"port"`
-	Protocol    string        `json:"protocol"`
-	State       string        `json:"state"`
-	Name        string        `json:"name,omitempty"`
-	Category    string        `json:"category,omitempty"`
-	Description string        `json:"description,omitempty"`
-	Banner      string        `json:"banner,omitempty"`
-	ObservedAt  time.Time     `json:"observed_at"`
-	Duration    time.Duration `json:"duration,omitempty"`
+	HostIP            string          `json:"host_ip"`
+	Port              int             `json:"port"`
+	Protocol          string          `json:"protocol"`
+	State             string          `json:"state"`
+	Name              string          `json:"name,omitempty"`
+	Category          string          `json:"category,omitempty"`
+	Description       string          `json:"description,omitempty"`
+	Banner            string          `json:"banner,omitempty"`
+	Version           string          `json:"version,omitempty"`
+	VersionConfidence string          `json:"version_confidence,omitempty"`
+	VersionEvidence   string          `json:"version_evidence,omitempty"`
+	Vulnerabilities   []Vulnerability `json:"vulnerabilities,omitempty"`
+	ObservedAt        time.Time       `json:"observed_at"`
+	Duration          time.Duration   `json:"duration,omitempty"`
+}
+
+type Vulnerability struct {
+	ID          string  `json:"id"`
+	Severity    string  `json:"severity,omitempty"`
+	CVSS        float64 `json:"cvss,omitempty"`
+	Summary     string  `json:"summary,omitempty"`
+	Source      string  `json:"source"`
+	Match       string  `json:"match"`
+	MatchType   string  `json:"match_type"`
+	Verified    bool    `json:"verified"`
+	Confirmed   bool    `json:"confirmed"`
+	Remediation string  `json:"remediation,omitempty"`
 }
 
 type TLSMetadata struct {
-	Host          string    `json:"host"`
-	Port          int       `json:"port"`
-	Version       string    `json:"version,omitempty"`
-	Subject       string    `json:"subject,omitempty"`
-	Issuer        string    `json:"issuer,omitempty"`
-	SANs          []string  `json:"sans,omitempty"`
-	NotAfter      time.Time `json:"not_after,omitempty"`
-	ExpiresIn     int       `json:"expires_in_days,omitempty"`
-	ExpiryWarning bool      `json:"expiry_warning"`
+	Host              string    `json:"host"`
+	Port              int       `json:"port"`
+	Version           string    `json:"version,omitempty"`
+	Subject           string    `json:"subject,omitempty"`
+	Issuer            string    `json:"issuer,omitempty"`
+	SANs              []string  `json:"sans,omitempty"`
+	NotAfter          time.Time `json:"not_after,omitempty"`
+	ExpiresIn         int       `json:"expires_in_days,omitempty"`
+	ExpiryWarning     bool      `json:"expiry_warning"`
+	Verified          bool      `json:"verified"`
+	VerificationError string    `json:"verification_error,omitempty"`
 }
 
 type ScanResult struct {
