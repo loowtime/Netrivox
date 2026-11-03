@@ -16,7 +16,9 @@ import (
 	"github.com/loowtime/netrivox/internal/discovery"
 	"github.com/loowtime/netrivox/internal/dns"
 	"github.com/loowtime/netrivox/internal/export"
+	"github.com/loowtime/netrivox/internal/httpinfo"
 	"github.com/loowtime/netrivox/internal/intelligence"
+	"github.com/loowtime/netrivox/internal/risk"
 	"github.com/loowtime/netrivox/internal/scanner"
 	"github.com/loowtime/netrivox/internal/storage"
 	"github.com/loowtime/netrivox/internal/telemetry"
@@ -56,8 +58,11 @@ func newScanCommand() *cobra.Command {
 	var format string
 	var output string
 	var inspectTLS bool
+	var allowUntrustedTLS bool
 	var grabBanners bool
 	var advisories bool
+	var inspectHTTP bool
+	var allowUntrustedHTTP bool
 	command := &cobra.Command{
 		Use:   "scan",
 		Short: "Discover hosts and inventory selected TCP services",
@@ -116,8 +121,34 @@ func newScanCommand() *cobra.Command {
 				Hosts: hosts, Services: services,
 			}
 			if inspectTLS {
-				result.TLS = inspectOpenTLS(cmd, cfg.Timeout, services)
+				result.TLS = inspectOpenTLS(cmd, cfg.Timeout, services, allowUntrustedTLS)
 			}
+			if inspectHTTP {
+				analyzer := httpinfo.Analyzer{Timeout: cfg.Timeout, AllowUntrusted: allowUntrustedHTTP}
+				for index := range services {
+					service := &services[index]
+					if service.State != "open" || service.Category != "web" {
+						continue
+					}
+					metadata, inspectErr := analyzer.Inspect(cmd.Context(), service.HostIP, service.Port)
+					if inspectErr != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "warning: HTTP metadata for %s:%d: %v\n", service.HostIP, service.Port, inspectErr)
+						continue
+					}
+					service.HTTP = &metadata
+				}
+			}
+			for index := range services {
+				var tlsMetadata *models.TLSMetadata
+				for tlsIndex := range result.TLS {
+					if result.TLS[tlsIndex].Host == services[index].HostIP && result.TLS[tlsIndex].Port == services[index].Port {
+						tlsMetadata = &result.TLS[tlsIndex]
+						break
+					}
+				}
+				risk.Score(&services[index], tlsMetadata)
+			}
+			result.Services = services
 			if err := saveScan(cmd.Context(), result); err != nil {
 				return err
 			}
@@ -138,8 +169,11 @@ func newScanCommand() *cobra.Command {
 	command.Flags().StringVar(&format, "format", "table", "Output format: table, json, or csv")
 	command.Flags().StringVarP(&output, "output", "o", "", "Write results to a file instead of stdout")
 	command.Flags().BoolVar(&inspectTLS, "tls", false, "Inspect TLS metadata on open TLS services")
+	command.Flags().BoolVar(&allowUntrustedTLS, "tls-untrusted", false, "Allow TLS metadata inspection without certificate verification; results are marked untrusted")
 	command.Flags().BoolVar(&grabBanners, "banner", false, "Read a small, bounded service banner from open TCP services")
 	command.Flags().BoolVar(&advisories, "cve", false, "Query NVD for possible CVEs matching detected product versions")
+	command.Flags().BoolVar(&inspectHTTP, "http", false, "Collect bounded HTTP metadata and security headers from open web services")
+	command.Flags().BoolVar(&allowUntrustedHTTP, "http-untrusted", false, "Allow HTTPS metadata collection without certificate verification")
 	return command
 }
 
@@ -300,8 +334,8 @@ func countOpenServices(services []models.Service) int {
 	return count
 }
 
-func inspectOpenTLS(cmd *cobra.Command, timeout time.Duration, services []models.Service) []models.TLSMetadata {
-	analyzer := tlsinfo.Analyzer{Timeout: timeout}
+func inspectOpenTLS(cmd *cobra.Command, timeout time.Duration, services []models.Service, allowUntrusted bool) []models.TLSMetadata {
+	analyzer := tlsinfo.Analyzer{Timeout: timeout, AllowUntrusted: allowUntrusted}
 	result := make([]models.TLSMetadata, 0)
 	for _, service := range services {
 		if service.State != "open" || (service.Port != 443 && service.Port != 8443) {
