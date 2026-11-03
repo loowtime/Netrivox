@@ -74,6 +74,10 @@ CREATE TABLE IF NOT EXISTS services (
 	version_confidence TEXT NOT NULL DEFAULT '',
 	version_evidence TEXT NOT NULL DEFAULT '',
 	vulnerabilities_json TEXT NOT NULL DEFAULT '[]',
+	risk_score INTEGER NOT NULL DEFAULT 0,
+	risk_level TEXT NOT NULL DEFAULT '',
+	risk_factors_json TEXT NOT NULL DEFAULT '[]',
+	http_json TEXT,
 	observed_at TEXT NOT NULL,
 	duration_ns INTEGER NOT NULL DEFAULT 0,
 	PRIMARY KEY (scan_id, host_ip, port, protocol)
@@ -89,6 +93,8 @@ CREATE TABLE IF NOT EXISTS tls_metadata (
 	not_after TEXT,
 	expires_in_days INTEGER NOT NULL DEFAULT 0,
 	expiry_warning INTEGER NOT NULL,
+	verified INTEGER NOT NULL DEFAULT 0,
+	verification_error TEXT NOT NULL DEFAULT '',
 	PRIMARY KEY (scan_id, host, port)
 );
 CREATE INDEX IF NOT EXISTS idx_scans_started_at ON scans(started_at DESC);
@@ -105,6 +111,12 @@ CREATE INDEX IF NOT EXISTS idx_services_scan_state ON services(scan_id, state);
 		`ALTER TABLE services ADD COLUMN version_confidence TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE services ADD COLUMN version_evidence TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE services ADD COLUMN vulnerabilities_json TEXT NOT NULL DEFAULT '[]'`,
+		`ALTER TABLE services ADD COLUMN risk_score INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE services ADD COLUMN risk_level TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE services ADD COLUMN risk_factors_json TEXT NOT NULL DEFAULT '[]'`,
+		`ALTER TABLE services ADD COLUMN http_json TEXT`,
+		`ALTER TABLE tls_metadata ADD COLUMN verified INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE tls_metadata ADD COLUMN verification_error TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := s.db.ExecContext(ctx, column); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			return fmt.Errorf("upgrade services table: %w", err)
@@ -139,9 +151,21 @@ func (s *Store) Save(ctx context.Context, result models.ScanResult) error {
 		if err != nil {
 			return fmt.Errorf("encode vulnerabilities for %s:%d: %w", service.HostIP, service.Port, err)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO services(scan_id, host_ip, port, protocol, state, name, category, description, banner, version, version_confidence, version_evidence, vulnerabilities_json, observed_at, duration_ns) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		factors, err := json.Marshal(service.RiskFactors)
+		if err != nil {
+			return fmt.Errorf("encode risk factors for %s:%d: %w", service.HostIP, service.Port, err)
+		}
+		var httpMetadata []byte
+		if service.HTTP != nil {
+			httpMetadata, err = json.Marshal(service.HTTP)
+			if err != nil {
+				return fmt.Errorf("encode HTTP metadata for %s:%d: %w", service.HostIP, service.Port, err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO services(scan_id, host_ip, port, protocol, state, name, category, description, banner, version, version_confidence, version_evidence, vulnerabilities_json, risk_score, risk_level, risk_factors_json, http_json, observed_at, duration_ns) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			scan.ID, service.HostIP, service.Port, service.Protocol, service.State, service.Name, service.Category, service.Description,
 			service.Banner, service.Version, service.VersionConfidence, service.VersionEvidence, string(vulnerabilities),
+			service.RiskScore, service.RiskLevel, string(factors), nullableJSON(httpMetadata),
 			service.ObservedAt.UTC().Format(time.RFC3339Nano), service.Duration.Nanoseconds()); err != nil {
 			return fmt.Errorf("save service %s:%d: %w", service.HostIP, service.Port, err)
 		}
@@ -151,9 +175,9 @@ func (s *Store) Save(ctx context.Context, result models.ScanResult) error {
 		if err != nil {
 			return fmt.Errorf("encode TLS SANs for %s:%d: %w", metadata.Host, metadata.Port, err)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO tls_metadata(scan_id, host, port, version, subject, issuer, sans_json, not_after, expires_in_days, expiry_warning) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		if _, err := tx.ExecContext(ctx, `INSERT INTO tls_metadata(scan_id, host, port, version, subject, issuer, sans_json, not_after, expires_in_days, expiry_warning, verified, verification_error) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			scan.ID, metadata.Host, metadata.Port, metadata.Version, metadata.Subject, metadata.Issuer, string(sans),
-			metadata.NotAfter.UTC().Format(time.RFC3339Nano), metadata.ExpiresIn, metadata.ExpiryWarning); err != nil {
+			metadata.NotAfter.UTC().Format(time.RFC3339Nano), metadata.ExpiresIn, metadata.ExpiryWarning, metadata.Verified, metadata.VerificationError); err != nil {
 			return fmt.Errorf("save TLS metadata for %s:%d: %w", metadata.Host, metadata.Port, err)
 		}
 	}
@@ -242,15 +266,16 @@ func (s *Store) Load(ctx context.Context, id string) (models.ScanResult, error) 
 	if err := rows.Close(); err != nil {
 		return result, fmt.Errorf("close host rows: %w", err)
 	}
-	rows, err = s.db.QueryContext(ctx, `SELECT host_ip, port, protocol, state, name, category, description, banner, version, version_confidence, version_evidence, vulnerabilities_json, observed_at, duration_ns FROM services WHERE scan_id = ? ORDER BY host_ip, port`, id)
+	rows, err = s.db.QueryContext(ctx, `SELECT host_ip, port, protocol, state, name, category, description, banner, version, version_confidence, version_evidence, vulnerabilities_json, risk_score, risk_level, risk_factors_json, http_json, observed_at, duration_ns FROM services WHERE scan_id = ? ORDER BY host_ip, port`, id)
 	if err != nil {
 		return result, fmt.Errorf("load services: %w", err)
 	}
 	for rows.Next() {
 		var service models.Service
-		var observed, vulnerabilities string
+		var observed, vulnerabilities, factors string
+		var httpMetadata []byte
 		var duration int64
-		if err := rows.Scan(&service.HostIP, &service.Port, &service.Protocol, &service.State, &service.Name, &service.Category, &service.Description, &service.Banner, &service.Version, &service.VersionConfidence, &service.VersionEvidence, &vulnerabilities, &observed, &duration); err != nil {
+		if err := rows.Scan(&service.HostIP, &service.Port, &service.Protocol, &service.State, &service.Name, &service.Category, &service.Description, &service.Banner, &service.Version, &service.VersionConfidence, &service.VersionEvidence, &vulnerabilities, &service.RiskScore, &service.RiskLevel, &factors, &httpMetadata, &observed, &duration); err != nil {
 			rows.Close()
 			return result, fmt.Errorf("read service: %w", err)
 		}
@@ -258,25 +283,37 @@ func (s *Store) Load(ctx context.Context, id string) (models.ScanResult, error) 
 			rows.Close()
 			return result, fmt.Errorf("parse service vulnerabilities: %w", err)
 		}
+		if err := json.Unmarshal([]byte(factors), &service.RiskFactors); err != nil {
+			rows.Close()
+			return result, fmt.Errorf("parse service risk factors: %w", err)
+		}
+		if len(httpMetadata) > 0 {
+			service.HTTP = &models.HTTPMetadata{}
+			if err := json.Unmarshal(httpMetadata, service.HTTP); err != nil {
+				rows.Close()
+				return result, fmt.Errorf("parse HTTP metadata: %w", err)
+			}
+		}
 		service.ObservedAt, err = time.Parse(time.RFC3339Nano, observed)
 		if err != nil {
 			rows.Close()
 			return result, fmt.Errorf("parse service time: %w", err)
 		}
+
 		service.Duration = time.Duration(duration)
 		result.Services = append(result.Services, service)
 	}
 	if err := rows.Close(); err != nil {
 		return result, fmt.Errorf("close service rows: %w", err)
 	}
-	rows, err = s.db.QueryContext(ctx, `SELECT host, port, version, subject, issuer, sans_json, not_after, expires_in_days, expiry_warning FROM tls_metadata WHERE scan_id = ? ORDER BY host, port`, id)
+	rows, err = s.db.QueryContext(ctx, `SELECT host, port, version, subject, issuer, sans_json, not_after, expires_in_days, expiry_warning, verified, verification_error FROM tls_metadata WHERE scan_id = ? ORDER BY host, port`, id)
 	if err != nil {
 		return result, fmt.Errorf("load TLS metadata: %w", err)
 	}
 	for rows.Next() {
 		var metadata models.TLSMetadata
 		var sans, notAfter string
-		if err := rows.Scan(&metadata.Host, &metadata.Port, &metadata.Version, &metadata.Subject, &metadata.Issuer, &sans, &notAfter, &metadata.ExpiresIn, &metadata.ExpiryWarning); err != nil {
+		if err := rows.Scan(&metadata.Host, &metadata.Port, &metadata.Version, &metadata.Subject, &metadata.Issuer, &sans, &notAfter, &metadata.ExpiresIn, &metadata.ExpiryWarning, &metadata.Verified, &metadata.VerificationError); err != nil {
 			rows.Close()
 			return result, fmt.Errorf("read TLS metadata: %w", err)
 		}
@@ -297,6 +334,13 @@ func (s *Store) Load(ctx context.Context, id string) (models.ScanResult, error) 
 		return result, fmt.Errorf("close TLS rows: %w", err)
 	}
 	return result, nil
+}
+
+func nullableJSON(data []byte) any {
+	if len(data) == 0 {
+		return nil
+	}
+	return string(data)
 }
 
 func DatabasePath(configPath string) string {
