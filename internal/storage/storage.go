@@ -115,6 +115,7 @@ CREATE INDEX IF NOT EXISTS idx_services_scan_state ON services(scan_id, state);
 		`ALTER TABLE services ADD COLUMN risk_level TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE services ADD COLUMN risk_factors_json TEXT NOT NULL DEFAULT '[]'`,
 		`ALTER TABLE services ADD COLUMN http_json TEXT`,
+
 		`ALTER TABLE tls_metadata ADD COLUMN verified INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE tls_metadata ADD COLUMN verification_error TEXT NOT NULL DEFAULT ''`,
 	} {

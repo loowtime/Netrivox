@@ -45,6 +45,7 @@ Network intelligence commands:
 go run ./cmd/netrivox scan --ports 22,80,443 --banner
 go run ./cmd/netrivox scan --ports 22,80,443 --banner --cve --format json
 go run ./cmd/netrivox scan --ports 80,443 --http --format json
+
 go run ./cmd/netrivox dns example.com --format json
 go run ./cmd/netrivox compare scan-older-id scan-newer-id
 ```
@@ -52,6 +53,7 @@ go run ./cmd/netrivox compare scan-older-id scan-newer-id
 Banner collection is opt-in, bounded to 1024 bytes and a short read deadline. Detected versions are marked with evidence and confidence. `--cve` automatically enables the bounded banner read, then performs an opt-in NVD keyword lookup and reports only possible matches; keyword results are not proof that a target is vulnerable and must be verified against the vendor advisory, package backports, configuration and deployment context. Netrivox does not authenticate, exploit, brute-force, or bypass a service.
 
 Open services receive a transparent 0-100 risk score with contributing factors. The score prioritizes exposed remote-access/data services, unidentified versions, possible CVEs and untrusted TLS; it is triage guidance, not proof of exploitability. `--http` performs one bounded GET request per open web service, records basic metadata and reports missing defensive headers without attempting exploitation.
+
 
 Port selections accept individual ports and ranges, for example `22,80,443` or `1-1024`. A hard limit of 4096 selected ports prevents accidental resource exhaustion. Host and port work share a bounded worker pool from `max_concurrency`, so large authorized ranges do not create one goroutine pool per host. Results remain sorted by host and port for stable automation output.
 

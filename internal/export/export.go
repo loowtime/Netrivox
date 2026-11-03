@@ -40,6 +40,7 @@ func CSV(w io.Writer, result models.ScanResult) error {
 func Table(w io.Writer, result models.ScanResult) error {
 	fmt.Fprintf(w, "Scan: %s\nHosts: %d | Open services: %d\n\n", result.Scan.ID, len(result.Hosts), len(result.Services))
 	if _, err := fmt.Fprintln(w, "HOST\tPORT\tSTATE\tSERVICE\tVERSION\tRISK\tCVEs"); err != nil {
+
 		return err
 	}
 	for _, service := range result.Services {
@@ -47,6 +48,7 @@ func Table(w io.Writer, result models.ScanResult) error {
 			continue
 		}
 		if _, err := fmt.Fprintf(w, "%s\t%d\t%s\t%s\t%s\t%s\t%d\n", service.HostIP, service.Port, service.State, service.Name, service.Version, service.RiskLevel, len(service.Vulnerabilities)); err != nil {
+
 			return err
 		}
 	}
