@@ -451,12 +451,16 @@ func writeScanResult(cmd *cobra.Command, result models.ScanResult, format, outpu
 			return fmt.Errorf("unsupported format %q; choose table, json, or csv", format)
 		}
 	}
-	var err error
-	writer, err = os.Create(output)
-	if err != nil {
-		return fmt.Errorf("create output %q: %w", output, err)
+	if !supportedFormat(format) {
+		return fmt.Errorf("unsupported format %q; choose table, json, or csv", format)
 	}
-	defer writer.Close()
+	directory := filepath.Dir(output)
+	writer, err := os.CreateTemp(directory, ".netrivox-output-*")
+	if err != nil {
+		return fmt.Errorf("create temporary output for %q: %w", output, err)
+	}
+	tempPath := writer.Name()
+	defer os.Remove(tempPath)
 	switch strings.ToLower(format) {
 	case "json":
 		err = export.JSON(writer, result)
@@ -468,10 +472,26 @@ func writeScanResult(cmd *cobra.Command, result models.ScanResult, format, outpu
 		return fmt.Errorf("unsupported format %q; choose table, json, or csv", format)
 	}
 	if err != nil {
+		_ = writer.Close()
 		return fmt.Errorf("write output %q: %w", output, err)
+	}
+	if err := writer.Close(); err != nil {
+		return fmt.Errorf("close output %q: %w", output, err)
+	}
+	if err := os.Rename(tempPath, output); err != nil {
+		return fmt.Errorf("commit output %q: %w", output, err)
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Scan written to %s\n", output)
 	return nil
+}
+
+func supportedFormat(format string) bool {
+	switch strings.ToLower(format) {
+	case "table", "json", "csv":
+		return true
+	default:
+		return false
+	}
 }
 
 func newDiscoveryCommand() *cobra.Command {
