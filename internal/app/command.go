@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -45,11 +46,97 @@ func NewCommand() *cobra.Command {
 		newScanCommand(),
 		newDNSCommand(),
 		newCompareCommand(),
-		newPlaceholderCommand("inventory", "Inspect stored host and service inventory."),
-		newPlaceholderCommand("export", "Export inventory data."),
+		newInventoryCommand(),
+		newExportCommand(),
 		newHistoryCommand(),
 	)
 	return root
+}
+
+func openStore() (*storage.Store, error) {
+	configPath, err := config.Path()
+	if err != nil {
+		return nil, err
+	}
+	return storage.Open(storage.DatabasePath(configPath))
+}
+
+func newInventoryCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "inventory",
+		Short: "Inspect stored host and service inventory",
+	}
+	var format, output string
+	show := &cobra.Command{
+		Use:   "show [scan-id]",
+		Short: "Show a stored scan, defaulting to the latest scan",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			store, err := openStore()
+			if err != nil {
+				return err
+			}
+			defer store.Close()
+			scanID, err := latestOrRequestedScanID(cmd, store, args)
+			if err != nil {
+				return err
+			}
+			result, err := store.Load(cmd.Context(), scanID)
+			if err != nil {
+				return fmt.Errorf("load inventory %q: %w", scanID, err)
+			}
+			return writeScanResult(cmd, result, format, output)
+		},
+	}
+	show.Flags().StringVar(&format, "format", "table", "Output format: table, json, or csv")
+	show.Flags().StringVarP(&output, "output", "o", "", "Write results to a file instead of stdout")
+	command.AddCommand(show)
+	return command
+}
+
+func newExportCommand() *cobra.Command {
+	var format, output string
+	command := &cobra.Command{
+		Use:   "export [scan-id]",
+		Short: "Export a stored scan, defaulting to the latest scan",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			store, err := openStore()
+			if err != nil {
+				return err
+			}
+			defer store.Close()
+			scanID, err := latestOrRequestedScanID(cmd, store, args)
+			if err != nil {
+				return err
+			}
+			result, err := store.Load(cmd.Context(), scanID)
+			if err != nil {
+				return fmt.Errorf("load scan %q: %w", scanID, err)
+			}
+			if output == "" {
+				return writeScanResult(cmd, result, format, "")
+			}
+			return writeScanResult(cmd, result, format, output)
+		},
+	}
+	command.Flags().StringVar(&format, "format", "json", "Output format: table, json, or csv")
+	command.Flags().StringVarP(&output, "output", "o", "", "Write results to a file instead of stdout")
+	return command
+}
+
+func latestOrRequestedScanID(ctx *cobra.Command, store *storage.Store, args []string) (string, error) {
+	if len(args) == 1 {
+		return args[0], nil
+	}
+	scans, err := store.List(ctx.Context(), 1)
+	if err != nil {
+		return "", fmt.Errorf("find latest scan: %w", err)
+	}
+	if len(scans) == 0 {
+		return "", fmt.Errorf("no stored scans found; run `netrivox scan` first")
+	}
+	return scans[0].ID, nil
 }
 
 func newScanCommand() *cobra.Command {
@@ -352,7 +439,6 @@ func inspectOpenTLS(cmd *cobra.Command, timeout time.Duration, services []models
 }
 
 func writeScanResult(cmd *cobra.Command, result models.ScanResult, format, output string) error {
-	var writer *os.File
 	if output == "" {
 		switch strings.ToLower(format) {
 		case "json":
