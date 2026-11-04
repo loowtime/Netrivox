@@ -25,6 +25,10 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open SQLite database: %w", err)
 	}
+	if _, err := db.Exec(`PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL;`); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("configure SQLite database: %w", err)
+	}
 	store := &Store{db: db}
 	if err := store.migrate(context.Background()); err != nil {
 		_ = db.Close()
@@ -120,11 +124,14 @@ CREATE INDEX IF NOT EXISTS idx_services_scan_state ON services(scan_id, state);
 		`ALTER TABLE tls_metadata ADD COLUMN verification_error TEXT NOT NULL DEFAULT ''`,
 	} {
 		if _, err := s.db.ExecContext(ctx, column); err != nil && !strings.Contains(err.Error(), "duplicate column") {
-			return fmt.Errorf("upgrade services table: %w", err)
+			return fmt.Errorf("upgrade schema: %w", err)
 		}
 	}
 	if _, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(1, ?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 		return fmt.Errorf("record SQLite migration: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(2, ?)`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		return fmt.Errorf("record SQLite schema upgrade: %w", err)
 	}
 	return nil
 }
