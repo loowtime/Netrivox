@@ -4,7 +4,7 @@ Netrivox is an open-source platform for controlled network discovery and infrast
 
 ## Status
 
-The project is in **Phase 2 — Core Engine**. The current release provides safe configuration defaults, structured logging, shared inventory models, bounded host discovery, controlled TCP port inventory, and DNS record lookups. SQLite persistence and presentation layers will be added in subsequent phases.
+The project is in active development. The current release provides safe configuration defaults, bounded host discovery, controlled TCP port inventory, DNS/TLS/HTTP intelligence, SQLite persistence, history, comparison, and machine-readable exports.
 
 ## Build and run
 
@@ -30,7 +30,7 @@ go run ./cmd/netrivox scan --ports 22,80,443 --format csv --output services.csv
 go run ./cmd/netrivox scan --ports 1-1024 --format table
 ```
 
-The scan command first performs the bounded reachability check, then inventories ports only on reachable hosts. Known ports receive a service classification; TLS analysis is optional and reads certificate metadata without trusting or modifying the remote certificate.
+The scan command first performs the bounded reachability check, then inventories ports only on reachable hosts. Known ports receive a service classification; TLS analysis is optional and verifies certificates by default. Use `--tls-untrusted` only for explicitly approved self-signed/internal endpoints.
 
 Every completed `scan` is stored in a local SQLite database next to the configuration file as `netrivox.db`. Review recent runs with:
 
@@ -70,5 +70,18 @@ Netrivox is designed for networks that you own or are authorized to test. Scanni
 3. Storage: SQLite migrations and repository interfaces.
 4. TLS intelligence and exports.
 5. TUI, API, dashboard, and release automation.
+
+## Quality and security
+
+Run the local quality gate before submitting changes:
+
+```sh
+gofmt -w .
+go test ./...
+go vet ./...
+go build ./cmd/netrivox
+```
+
+See [SECURITY.md](./SECURITY.md), [ARCHITECTURE.md](./ARCHITECTURE.md), [CONFIGURATION.md](./CONFIGURATION.md), and [DEVELOPMENT.md](./DEVELOPMENT.md) for operating and contribution guidance.
 
 See [LICENSE](./LICENSE) for licensing information.
