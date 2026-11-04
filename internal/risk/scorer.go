@@ -83,3 +83,27 @@ func Summary(result models.ScanResult) string {
 func IsHighRisk(service models.Service) bool {
 	return strings.EqualFold(service.RiskLevel, "high") || strings.EqualFold(service.RiskLevel, "critical")
 }
+
+func MeetsThreshold(service models.Service, threshold string) bool {
+	ranks := map[string]int{"low": 1, "medium": 2, "high": 3, "critical": 4}
+	return ranks[strings.ToLower(service.RiskLevel)] >= ranks[strings.ToLower(threshold)]
+}
+
+func ValidateThreshold(threshold string) bool {
+	switch strings.ToLower(threshold) {
+	case "low", "medium", "high", "critical":
+		return true
+	default:
+		return false
+	}
+}
+
+func Violations(services []models.Service, threshold string) []models.Service {
+	var result []models.Service
+	for _, service := range services {
+		if MeetsThreshold(service, threshold) {
+			result = append(result, service)
+		}
+	}
+	return result
+}
