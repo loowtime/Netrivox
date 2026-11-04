@@ -28,9 +28,19 @@ go run ./cmd/netrivox scan --ports 22,80,443 --format table
 go run ./cmd/netrivox scan --ports 80,443 --tls --format json --output scan.json
 go run ./cmd/netrivox scan --ports 22,80,443 --format csv --output services.csv
 go run ./cmd/netrivox scan --ports 1-1024 --format table
+go run ./cmd/netrivox scan --profile quick
+go run ./cmd/netrivox scan --profile deep --fail-on-risk high --format json --output deep-scan.json
 ```
 
 The scan command first performs the bounded reachability check, then inventories ports only on reachable hosts. Known ports receive a service classification; TLS analysis is optional and verifies certificates by default. Use `--tls-untrusted` only for explicitly approved self-signed/internal endpoints.
+
+Profiles make common workflows reproducible:
+
+- `quick`: common web ports, no banner/advisory lookups.
+- `standard`: common administrative/web ports plus TLS and HTTP metadata.
+- `deep`: TCP ports 1-1024, bounded banners, TLS/HTTP metadata, and optional NVD keyword advisories.
+
+Explicit flags override profile values. `--fail-on-risk high` is suitable for CI or scheduled assessments: the report is still written, but the command exits non-zero when a high or critical service is found.
 
 Every completed `scan` is stored in a local SQLite database next to the configuration file as `netrivox.db`. Review recent runs with:
 

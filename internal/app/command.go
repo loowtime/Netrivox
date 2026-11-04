@@ -19,6 +19,7 @@ import (
 	"github.com/loowtime/netrivox/internal/export"
 	"github.com/loowtime/netrivox/internal/httpinfo"
 	"github.com/loowtime/netrivox/internal/intelligence"
+	"github.com/loowtime/netrivox/internal/profiles"
 	"github.com/loowtime/netrivox/internal/risk"
 	"github.com/loowtime/netrivox/internal/scanner"
 	"github.com/loowtime/netrivox/internal/storage"
@@ -150,12 +151,39 @@ func newScanCommand() *cobra.Command {
 	var advisories bool
 	var inspectHTTP bool
 	var allowUntrustedHTTP bool
+	var profileName string
+	var failOnRisk string
 	command := &cobra.Command{
 		Use:   "scan",
 		Short: "Discover hosts and inventory selected TCP services",
 		Example: "  netrivox scan --ports 22,80,443 --format table\n" +
 			"  netrivox scan --ports 80,443 --tls --format json --output scan.json",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if failOnRisk != "" && !risk.ValidateThreshold(failOnRisk) {
+				return fmt.Errorf("invalid --fail-on-risk value %q; choose low, medium, high, or critical", failOnRisk)
+			}
+			profile, err := profiles.Get(profileName)
+			if err != nil {
+				return err
+			}
+			if !cmd.Flags().Changed("ports") {
+				ports = profile.Ports
+			}
+			if !cmd.Flags().Changed("probe-port") {
+				probePort = profile.ProbePort
+			}
+			if !cmd.Flags().Changed("banner") {
+				grabBanners = profile.Banner
+			}
+			if !cmd.Flags().Changed("tls") {
+				inspectTLS = profile.TLS
+			}
+			if !cmd.Flags().Changed("http") {
+				inspectHTTP = profile.HTTP
+			}
+			if !cmd.Flags().Changed("cve") {
+				advisories = profile.Advisories
+			}
 			cfg, err := loadConfig()
 			if err != nil {
 				return err
@@ -242,6 +270,12 @@ func newScanCommand() *cobra.Command {
 			if err := writeScanResult(cmd, result, format, output); err != nil {
 				return err
 			}
+			if failOnRisk != "" {
+				violations := risk.Violations(services, failOnRisk)
+				if len(violations) > 0 {
+					return fmt.Errorf("security gate failed: %d service(s) at or above %s risk", len(violations), failOnRisk)
+				}
+			}
 
 			if output == "" && strings.EqualFold(format, "table") {
 				fmt.Fprintf(cmd.ErrOrStderr(), "\nCompleted in %s: %d hosts, %d reachable, %d services checked, %d open\n",
@@ -261,6 +295,8 @@ func newScanCommand() *cobra.Command {
 	command.Flags().BoolVar(&advisories, "cve", false, "Query NVD for possible CVEs matching detected product versions")
 	command.Flags().BoolVar(&inspectHTTP, "http", false, "Collect bounded HTTP metadata and security headers from open web services")
 	command.Flags().BoolVar(&allowUntrustedHTTP, "http-untrusted", false, "Allow HTTPS metadata collection without certificate verification")
+	command.Flags().StringVar(&profileName, "profile", "standard", "Scan profile: quick, standard, or deep")
+	command.Flags().StringVar(&failOnRisk, "fail-on-risk", "", "Exit non-zero when a service reaches low, medium, high, or critical risk")
 	return command
 }
 
